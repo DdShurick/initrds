@@ -125,16 +125,19 @@ for DEV in $PDEV $(blkid | awk -F: '!/loop|swap/ {print $1}')
   break
  done
 
-[ ! "$PCOPY" ] && [ "$(cat /sys/block/${PDEV:0:3}/removable)" = 1  ] && PCOPY="yes"
-[ "$PCOPY" = "yes" ] && mount -t tmpfs tmpfs /mnt/tmpfs
 cp /mnt/${PDEV}${PDIR}/DISTRO_SPECS /etc/DISTRO_SPECS
 . /etc/DISTRO_SPECS
 [ $SYSMNT ] || SYSMNT=/initrd
+[ ! "$PCOPY" ] && [ "$(cat /sys/block/${PDEV:0:3}/removable)" = 1  ] && PCOPY="yes"
+if [ "$PCOPY" = "yes" ]
+ mkdir -p /mnt$SYSMNT/tmpfs
+ mount -t tmpfs tmpfs /mnt$SYSMNT/tmpfs
+fi
 find /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs 2>/dev/null
 echo -n "Загружается базовый файл" > /dev/console
 if [ "$PCOPY" = "yes" ]; then
- cp /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs /mnt/tmpfs/
- mount -o loop /mnt/tmpfs/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs /base || (echo "База не найдена">/dev/console; check_status 1)
+ cp /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs /mnt$SYSMNT/tmpfs/
+ mount -o loop /mnt$SYSMNT/tmpfs/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs /base || (echo "База не найдена">/dev/console; check_status 1)
 else
  mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs /base  || (echo "База не найдена">/dev/console; check_status 1)
 fi
@@ -153,8 +156,8 @@ elif [ "$(ls /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.[234s]fs)" ]; t
 	 mkdir /save_sq
 		if [ "$PCOPY" = "yes" ]; then
 		 mkdir /save_sq
-		 cp /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs /mnt/tmpfs/
-		 mount -o loop /mnt/tmpfs/${DISTRO_FILE_PREFIX}-save.sfs /save_sq || check_status 1
+		 cp /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs /mnt$SYSMNT/tmpfs/
+		 mount -o loop /mnt$SYSMNT/tmpfs/${DISTRO_FILE_PREFIX}-save.sfs /save_sq || check_status 1
 		else
 		 mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs /save_sq || check_status 1
 		fi
@@ -167,8 +170,8 @@ else
 fi
 if [ -f /mnt/${PDEV}${PDIR}/base/kernel-${KERNELVER}.sfs ]; then
 	if [ "$PCOPY" = "yes" ]; then
-	 cp /mnt/${PDEV}${PDIR}/base/kernel-${KERNELVER}.sfs /mnt/tmpfs
-	 mount -o loop /mnt/tmpfs/kernel-${KERNELVER}.sfs /kernel || check_status 1
+	 cp /mnt/${PDEV}${PDIR}/base/kernel-${KERNELVER}.sfs /mnt$SYSMNT/tmpfs
+	 mount -o loop /mnt$SYSMNT/tmpfs/kernel-${KERNELVER}.sfs /kernel || check_status 1
 	else
 	 mount -o loop /mnt/${PDEV}${PDIR}/base/kernel-${KERNELVER}.sfs /kernel || check_status 1
 	fi
@@ -199,8 +202,8 @@ if [ "$PSOFT" != "no" -o -d /mnt/${PDEV}${PDIR}/${PFSDIR} ];then
 		 [ "$(grep $ONEEXTRA /proc/mounts)" = "" ] || continue
 		 mkdir -p /$ONEEXTRA
 			if [ "$PCOPY" = "yes" ]; then
-			 cp ${PFSSDIR}${ONEEXTRA} /mnt/tmpfs/
-			 mount -o loop /mnt/tmpfs/${ONEEXTRA} /$ONEEXTRA
+			 cp ${PFSSDIR}${ONEEXTRA} /mnt$SYSMNT/tmpfs/
+			 mount -o loop /mnt$SYSMNT/tmpfs/${ONEEXTRA} /$ONEEXTRA
 			else
 			 mount -o loop ${PFSSDIR}${ONEEXTRA} /$ONEEXTRA
 			fi
@@ -227,6 +230,7 @@ fi
 [ "$PDEV" ] && echo "PDEV='$PDEV'" > /tmp/PUPSTATE
 [ "$PDIR" ] && echo "PDIR='$PDIR'" >> /tmp/PUPSTATE
 [ "$SYSMNT" ] && echo "SYSMNT='$SYSMNT'" >> /tmp/PUPSTATE
+[ "$PCOPY" ] && echo "PCOPY='$PCOPY'" >> /tmp/PUPSTATE
 [ "$IP" ] && echo "SERVIP='$IP'" > /tmp/SERVSTATE
 [ "$SDIR" ] && echo "SDIR='$SDIR'" >> /tmp/SERVSTATE
 
@@ -259,8 +263,8 @@ mount -o move /mnt/$PDEV /pup_new/mnt/$PDEV
 mkdir -p /pup_new$SYSMNT/changes
 mount -o move /changes /pup_new$SYSMNT/changes
 if [ "$PCOPY" = "yes" ]; then
- mkdir -p /pup_new/mnt/tmpfs
- mount -o move /mnt/tmpfs /pup_new/mnt/tmpfs
+ mkdir -p /pup_new/mnt$SYSMNT/tmpfs
+ mount -o move /mnt$SYSMNT/tmpfs /pup_new/mnt$SYSMNT/tmpfs
 fi
 cp /tmp/* /pup_new/tmp
 
