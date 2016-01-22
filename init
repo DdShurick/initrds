@@ -46,9 +46,9 @@ KERNELVER="`uname -r`"
 [ $pfsdir ] && PFSDIR="$pfsdir/" || PFSDIR="modules/" #directory for boot modules
 [ $resume ] && RESUME=$resume || RESUME=$(fdisk -l | grep -m 1 ' 82 ' | cut -f1 -d' ') # swap
 [ $serv ] && IP=$serv 			#loading of modules from the ftp-server
-[ $servpath ] && DIR=$servpath
-[ $load ] && LOAD=$(echo $load | tr ',' ' ') 
-[ $noload ] && NOLOAD="$(echo \'$noload\' | tr ',' '|' | tr -d ' ')"
+[ $servpath ] && SDIR=$servpath #если файлы не в корне сервера.
+[ $load ] && LOAD=$(echo $load | tr ',' ' ')
+[ $noload ] && NOLOAD=$(echo $noload | tr ',' '|')
 #now supporting a boot menu...
 RDSH=""
 if [ "$pfix" ];then
@@ -64,7 +64,7 @@ if [ "$pfix" ];then
    nox)     PNOX="yes";;          #do not start X.
    copy)    PCOPY="yes";;         #copy .sfs files into ram.
    nocopy)	PCOPY="no";;		  #not copy .sfs files into ram
-   showmntpt) SHOW="yes";;		  #show loops mountpoint
+   hide) 	HIDE="yes";;		  #show loops mountpoint
   esac
  done
 fi
@@ -129,7 +129,7 @@ for DEV in $PDEV $(blkid | awk -F: '!/loop|swap/ {print $1}')
 [ "$PCOPY" = "yes" ] && mount -t tmpfs tmpfs /mnt/tmpfs
 cp /mnt/${PDEV}${PDIR}/DISTRO_SPECS /etc/DISTRO_SPECS
 . /etc/DISTRO_SPECS
-[ $SQMNT ] || SQMNT=/mnt/bundles
+[ $SYSMNT ] || SYSMNT=/initrd
 find /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs 2>/dev/null
 echo -n "Загружается базовый файл" > /dev/console
 if [ "$PCOPY" = "yes" ]; then
@@ -139,23 +139,26 @@ else
  mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs /base  || (echo "База не найдена">/dev/console; check_status 1)
 fi
 if [ -d /mnt/${PDEV}${PDIR}/changes -a "$RO" != "-r" ]; then
- ln -s /mnt/${PDEV}${PDIR}/changes /save || check_status 1
+ ln -s /mnt/${PDEV}${PDIR}/changes /changes || check_status 1
  echo -n ", подключается каталог сохранения." > /dev/console
 elif [ "$(ls /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.[234s]fs)" ]; then
-	if [ -f /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.[234]fs ]; then	 
-	 mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.[234]fs /save0 || check_status 1
+	if [ -f /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.[234]fs ]; then	
+	 mkdir /save_ext 
+	 mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.[234]fs /save_ext || check_status 1
 	 MKRAM="yes"
-	 UMNTMAIN='/save0=ro+wh:'
+	 UMNTMAIN='/save_ext=ro+wh:'
 	 echo -n " и файл сохранения " > /dev/console
 	fi
 	if [ -f /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs ]; then
+	 mkdir /save_sq
 		if [ "$PCOPY" = "yes" ]; then
+		 mkdir /save_sq
 		 cp /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs /mnt/tmpfs/
-		 mount -o loop /mnt/tmpfs/${DISTRO_FILE_PREFIX}-save.sfs /save1 || check_status 1
+		 mount -o loop /mnt/tmpfs/${DISTRO_FILE_PREFIX}-save.sfs /save_sq || check_status 1
 		else
-		 mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs /save1 || check_status 1
+		 mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs /save_sq || check_status 1
 		fi
-	 UMNTSFS='/save1=ro+wh:'
+	 UMNTSFS='/save_sq=ro+wh:'
 	 MKRAM="yes"
 	 echo -n " и архив сохранения " > /dev/console
 	fi
@@ -172,11 +175,10 @@ if [ -f /mnt/${PDEV}${PDIR}/base/kernel-${KERNELVER}.sfs ]; then
  ZLAYER=':/kernel=ro'
 fi
 if [ "$MKRAM" = "yes" ]; then
- ALLOCK=$(($(free | grep 'Mem:' | tr -s ' ' | cut -f 2 -d ' ') / 2)) #half of physical.
+ ALLOCK=$(($(free -k | awk '/Mem:/ {print $2}') / 2)) #half of physical.
  [ $ALLOCK -gt 524288 ] && ALLOCK=524288
- mkdir /save
- mount -t tmpfs -o size=${ALLOCK}k tmpfs /save
- echo -n " плюс tmpfs." > /dev/console
+ mkdir /changes
+ mount -t tmpfs tmpfs /changes -o size=${ALLOCK}k && echo -n " плюс tmpfs." > /dev/console
 fi
 check_status 0
 ########################END FINDING AND LOADING PUPPY FILES############################
@@ -184,8 +186,8 @@ check_status 0
 ##########################FINDING AND LOADING PUPPY MODULES###########################
 
 if [ "$PSOFT" != "no" -o -d /mnt/${PDEV}${PDIR}/${PFSDIR} ];then
- EXTRASFSLIST="$(find /mnt/${PDEV}${PDIR}/${PFSDIR} -name *\.pfs -exec basename {} \;)"
- [ $NOLOAD ] && EXTRASFSLIST="$(echo $EXTRASFSLIST | egrep -v $NOLOAD)"
+ EXTRASFSLIST="$LOAD $(find /mnt/${PDEV}${PDIR}/${PFSDIR} -name *\.pfs -exec basename {} \;)"
+ [ $NOLOAD ] && EXTRASFSLIST=$(echo "$EXTRASFSLIST" | egrep -v "$NOLOAD")
 	if [ "$EXTRASFSLIST" != "" ];then
 	 echo -n "Загружаются модули программ" > /dev/console
 	 echo "$EXTRASFSLIST" | sort > /tmp/PFSMODULES
@@ -212,22 +214,6 @@ if [ "$PSOFT" != "no" -o -d /mnt/${PDEV}${PDIR}/${PFSDIR} ];then
 	 echo -n "Модули не найдены, уточните параметр psubdir" > /dev/console
 	 check_status 1
 	fi
- [ $LOAD ] && for ONEEXTRA in $LOAD
-	do
-	 [ -f /mnt/${PDEV}${PDIR}/optional/${ONEEXTRA} ] || continue
-	 [ "$(grep $ONEEXTRA /proc/mounts)" = "" ] || continue
-	 mkdir -p /$ONEEXTRA
-		if [ "$PCOPY" = "yes" ]; then
-		 cp /mnt/${PDEV}${PDIR}/optional/${ONEEXTRA} /mnt/tmpfs/
-		 mount -o loop /mnt/tmpfs/${ONEEXTRA} /$ONEEXTRA
-		else
-		 mount -o loop /mnt/${PDEV}${PDIR}/optional/${ONEEXTRA} /$ONEEXTRA
-		fi
-	 [ $? -eq 0 ] && UMNTRO="${UMNTRO}:/${ONEEXTRA}=ro"
-	 CNTLOOP=`expr $CNTLOOP + 1`
-	 [ $CNTLOOP -eq 128 ] && break
-	 echo -n "." > /dev/console
-	done
 else
  echo -n "Загрузка без модулей" > /dev/console
  check_status 0
@@ -238,14 +224,18 @@ fi
 
 #####################END FINDING AND LOADING PUPPY MODULES#################
 
-[ "$IP" ] && echo "SERVIP='$IP'" >> /tmp/SERVIP
+[ "$PDEV" ] && echo "PDEV='$PDEV'" > /tmp/PUPSTATE
+[ "$PDIR" ] && echo "PDIR='$PDIR'" >> /tmp/PUPSTATE
+[ "$SYSMNT" ] && echo "SYSMNT='$SYSMNT'" >> /tmp/PUPSTATE
+[ "$IP" ] && echo "SERVIP='$IP'" > /tmp/SERVSTATE
+[ "$SDIR" ] && echo "SDIR='$SDIR'" >> /tmp/SERVSTATE
 
 [ "$RDSH" = "6" ] && exec /bin/sh >/dev/console 2>&1 #w091027
 
 #######################SETUP UNIONFS LAYERED FILESYSTEM###################
 #create the unionfs layered f.s.... ***THE BIG EVENT***
 echo -n "Настройка слоёв файловой системы unionfs..." > /dev/console
-mount -t aufs -o udba=reval,diropq=w,dirs=/save=rw:${UMNTMAIN}${UMNTSFS}/base=ro${ZLAYER}${UMNTRO} unionfs /pup_new
+mount -t aufs -o udba=reval,diropq=w,dirs=/changes=rw:${UMNTMAIN}${UMNTSFS}/base=ro${ZLAYER}${UMNTRO} unionfs /pup_new
 
 check_status $? #END STEP FIVE
 #######################END SETUP UNIONFS LAYERED FILESYSTEM###################
@@ -255,26 +245,26 @@ check_status $? #END STEP FIVE
 echo -n "Замещение корневой файловой системы на многослойную..." > /dev/console
 
 #prepare everything for doing a switch_root...
-#cpio archive does switch_root, lose the initial-ramfs, so move all mntd...
-if [ "$SHOW" = "yes" ]; then
+
+if [ "$HIDE" != "yes" ]; then
 	for ONEMNT in `awk '/loop/ {print $2}' /proc/mounts`
 	do
-	 mkdir -p /pup_new${SQMNT}$ONEMNT
-	 mount -o move $ONEMNT /pup_new${SQMNT}$ONEMNT
+	 mkdir -p /pup_new${SYSMNT}/bundles${ONEMNT}
+	 mount -o move $ONEMNT /pup_new${SYSMNT}/bundles${ONEMNT}
 	done
 fi
 
 mkdir -p /pup_new/mnt/$PDEV
 mount -o move /mnt/$PDEV /pup_new/mnt/$PDEV
-mkdir -p /pup_new/mnt/save
-mount -o move /save /pup_new/mnt/save
+mkdir -p /pup_new$SYSMNT/changes
+mount -o move /changes /pup_new$SYSMNT/changes
 if [ "$PCOPY" = "yes" ]; then
  mkdir -p /pup_new/mnt/tmpfs
  mount -o move /mnt/tmpfs /pup_new/mnt/tmpfs
 fi
 cp /tmp/* /pup_new/tmp
 
-#mount home partition. Add DdShurick
+#mount home partition.
 if [ $CRYPTHOME ]; then
  mount $CRYPTHOME /pup_new/home
 elif [ $UUID ]; then
@@ -291,7 +281,7 @@ cp -af /tmp/* /pup_new/initrd/tmp/ #keep any log files.
 #RDSH is a boot param. exit to initial ramdisk shell...
 if [ "$RDSH" = "yes" ];then
  echo > /dev/console
- echo "Выходим в оболочку рамдиска. Наберите 'exec switch' для продолжения загрузки PuppyRus." > /dev/console 
+ echo "Выходим в оболочку рамдиска. Наберите 'exec switch_root /pup_new /sbin/init' для продолжения загрузки PuppyRus." > /dev/console 
  exec /bin/sh >/dev/console 2>&1
 fi
 
