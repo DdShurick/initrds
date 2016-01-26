@@ -192,17 +192,17 @@ if [ "$PSOFT" != "no" -o -d /mnt/${PDEV}${PDIR}/${PFSDIR} ];then
 	 echo -n "Загружаются модули программ" > /dev/console
 	 echo "$EXTRASFSLIST" | sort > /tmp/PFSMODULES
 	 CNTLOOP=$(losetup -f | tr -d [a-z/])
-		for ONEEXTRA in $(sed 's/\....$//' /tmp/PFSMODULES)
+		for ONEEXTRA in $(cat /tmp/PFSMODULES)
 		do
 		 [ "$(dirname $ONEEXTRA)" = "." ] && PFSSDIR="/mnt/${PDEV}${PDIR}/${PFSDIR}" || PFSSDIR="/mnt/$PDEV/"
-		 [ -f ${PFSSDIR}${ONEEXTRA}.[ps]fs ] || continue
+		 [ -f ${PFSSDIR}${ONEEXTRA} ] || continue
 		 [ "$(grep $ONEEXTRA /proc/mounts)" = "" ] || continue
 		 mkdir -p /$ONEEXTRA
 			if [ "$PCOPY" = "yes" ]; then
-			 cp ${PFSSDIR}${ONEEXTRA}.[ps]fs /mnt/tmpfs/
-			 mount -o loop /mnt/tmpfs/${ONEEXTRA}.[ps]fs /$ONEEXTRA
+			 cp ${PFSSDIR}${ONEEXTRA} /mnt/tmpfs/
+			 mount -o loop /mnt/tmpfs/${ONEEXTRA} /$ONEEXTRA
 			else
-			 mount -o loop ${PFSSDIR}${ONEEXTRA}.[ps]fs /$ONEEXTRA
+			 mount -o loop ${PFSSDIR}${ONEEXTRA} /$ONEEXTRA
 			fi
 		 [ $? -eq 0 ] && UMNTRO="${UMNTRO}:/${ONEEXTRA}=ro"
 		 CNTLOOP=`expr $CNTLOOP + 1`
