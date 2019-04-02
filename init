@@ -4,16 +4,15 @@
 #2007 Lesser GPL licence v2 (http://www.fsf.org/licensing/licenses/lgpl.html)
 #
 #puppyrus2 tuxonice section add Pro
-#DdShurick переписал всё нафиг с 85 строки
+#DdShurick переписал всё нафиг с 35 строки
 
 check_status()
 {
   /bin/echo -en "\\033[72G" >/dev/console #move to column 72.
-  if [ $1 -eq 0 ]
-  then
+  if [ $1 -eq 0 ]; then
     /bin/echo -en "\\033[1;32mготово" >/dev/console
     /bin/echo -e "\\033[0;39m" >/dev/console
-  else
+  elif [ $1 -eq 1 ]; then
     /bin/echo -en "\\033[1;31mошибка" >/dev/console
     /bin/echo -e "\\033[0;39m" >/dev/console
     echo -en "\\033[1;35m" >/dev/console #35=purple
@@ -29,7 +28,22 @@ check_status()
     dmesg | tail -n 4 >/dev/console
     /bin/echo -en "\\033[0;39m" >/dev/console
     exec /bin/sh >/dev/console 2>&1
+  else
+    /bin/echo -e "\\033[1;31m" >/dev/console #31=red
+    /bin/echo "$1" >/dev/console
+    /bin/echo -e "\\033[0;39m" >/dev/console
   fi
+}
+
+module_add () {
+	if [ "$copy2ram" = "yes" ]; then
+	 cp $NAME /tmpfs/
+	 mount -o loop /tmpfs/$(basename $NAME) /$1
+	 check_status $?
+	else
+	 mount -o loop $NAME /$1 
+	 check_status $?
+	fi
 }
 
 zcat /lib/consolefonts/ter-u16n.psf.gz | loadfont
@@ -37,42 +51,12 @@ export LANG=C #w004
 
 PATH="/bin:/sbin"
 KERNELVER="`uname -r`"
-#boot parametrs
-[ $loglevel ] && LOGLEVEL=$loglevel #v2.22
-[ $pdev1 ] && PDEV="$pdev1"    #partition have booted off. ex: hda3
-[ $dev ] && PDEV="$dev"		#partition have booted off. ex: hda3
-[ $psubdir ] && PDIR="$psubdir" || PDIR="*" #directory for puppy files. ex: puppy220
-[ $dir ] && PDIR="$dir" || PDIR="*" 	#directory for puppy files. ex: puppy220
-[ $pfsdir ] && PFSDIR="$pfsdir/" || PFSDIR="modules/" #directory for boot modules
-[ $resume ] && RESUME=$resume || RESUME=$(fdisk -l | grep -m 1 ' 82 ' | cut -f1 -d' ') # swap
-[ $serv ] && IP=$serv 			#loading of modules from the ftp-server
-[ $servpath ] && SDIR=$servpath #если файлы не в корне сервера.
-[ $load ] && LOAD="$(echo $load | tr ',' ' ') "
-[ $noload ] && NOLOAD=$(echo $noload | tr ',' '|')
-#now supporting a boot menu...
-RDSH=""
-if [ "$pfix" ];then
- for ONEFIX in `echo -n "$pfix" | tr ',' ' '`
- do
-  case $ONEFIX in
-   ram)     PRAMONLY="yes";;      #run in ram only (do not load ${DISTRO_FILE_PREFIX}save).
-   ro)		RO="-r";;
-   nosoft)  PSOFT="no";;          #do not losd soft.pfs
-   rdsh)    RDSH="yes";;          #exit to shell in initial ramdisk.
-   rdsh0)   RDSH="0";;            #drop out early, before loading drivers.
-   rdsh6)   RDSH="6";;            #w091027 drop out just before mount layerfs.
-   nox)     PNOX="yes";;          #do not start X.
-   copy)    PCOPY="yes";;         #copy .sfs files into ram.
-   nocopy)	PCOPY="no";;		  #not copy .sfs files into ram
-   hide) 	HIDE="yes";;		  #show loops mountpoint
-  esac
- done
-fi
+[ $dir ] || dir="*" 	#directory for puppy files. ex: puppy220
+[ $noload ] && NOLOAD=$(echo "$noload" | tr ',' '|')
 
 mount -t proc none /proc
 mount -t sysfs none /sys
 mount -t rootfs -o remount,rw rootfs /
-mount -t usbfs none /proc/bus/usb
 ln -s /proc/mounts /etc/mtab #resize2fs,e2fsck need this.
 ls /dev > /tmp/devices
 
@@ -82,34 +66,43 @@ clear #got this out of embutils, compiled in t2 (as not currently in busybox)
 #puppyrus2 tuxonice section 
 ###########  Tuxonice wake up ##############
 
+[ $resume ] && RESUME=$resume || RESUME=$(fdisk -l | grep -m 1 ' 82 ' | cut -f1 -d' ') # swap
 echo $RESUME > /sys/power/tuxonice/resume
 sleep 0.1
 echo 1 > /sys/power/tuxonice/do_resume
 
-swapon $RESUME && SWAPON=yes
+swapon $RESUME && SWAPON=$RESUME
 
 ############################################
 
 #######################FINDING AND LOADING PUPPY FILES###########################
-[ "$RDSH" = "0" ] && exec /bin/sh >/dev/console 2>&1
+[ "$rdsh" = "0" ] && exec /bin/sh >/dev/console 2>&1
+echo -n "Поиск системных файлов" > /dev/console
 
-PDEV=$(blkid | grep $PDEV | cut -f1 -d:) #if $PDEV - UUID
-echo -n "Поиск файлов Puppy" > /dev/console
- 
-for DEV in $PDEV $(blkid | awk -F: '!/loop|swap/ {print $1}')
+blkid > /tmp/uuid.lst
+if [ $dev ]; then
+	if [ "$(grep $dev /tmp/uuid.lst)" = "" ]; then
+		echo -n " ждём 5 секунд" > /dev/console
+		sleep 5
+		blkid > /tmp/uuid.lst
+	fi
+	dev1=$(grep $dev /tmp/uuid.lst | cut -b6-9)
+else
+	dev1=$(egrep -v 'loop|swap' /tmp/uuid.lst | cut -b6-9)
+fi
+for DEV in $dev1
  do
-  blkid $DEV | grep ntfs && MNT=ntfs-3g || MNT=mount
-  DEV=${DEV:5} 
+  grep $DEV /tmp/uuid.lst | grep ntfs && MNT=ntfs-3g || MNT=mount
   mkdir /mnt/$DEV
   N=0
- 	until $MNT /dev/$DEV /mnt/$DEV $RO 2>/dev/null
+ 	until $MNT /dev/$DEV /mnt/$DEV 2>/dev/null
 	 do
 	  sleep 1
 	  echo -n . >/dev/console
 	  N=$(expr $N + 1)
-	  [ $N = 10 ] && break
+	  [ $N = 10 ] && check_status 1
 	 done
-  DIR=$(ls /mnt/$DEV/$PDIR/base/kernel-`uname -r`.sfs 2>/dev/null | cut -d'/' -f4)
+ DIR=$(ls /mnt/$DEV/$dir/base/kernel-${KERNELVER}.xzm 2>/dev/null | cut -d'/' -f4- | sed 's|/base/kernel.*||')
 	if [ ! $DIR ]; then
 	 umount /mnt/$DEV
 	 rmdir /mnt/$DEV
@@ -119,124 +112,100 @@ for DEV in $PDEV $(blkid | awk -F: '!/loop|swap/ {print $1}')
  	 echo $DIR > /dev/console
  	 read DIR
  	fi
-  PDEV=$DEV
-  PDIR=/$DIR
+  dev=$DEV
+  dir=$DIR
   check_status 0
   break
  done
-
-[ ! "$PCOPY" ] && [ "$(cat /sys/block/${PDEV:0:3}/removable)" = 1  ] && PCOPY="yes"
-[ "$PCOPY" = "yes" ] && mount -t tmpfs tmpfs /mnt/tmpfs
-cp /mnt/${PDEV}${PDIR}/DISTRO_SPECS /etc/DISTRO_SPECS
-. /etc/DISTRO_SPECS
-[ $SYSMNT ] || SYSMNT=/initrd
-find /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs 2>/dev/null
-echo -n "Загружается базовый файл" > /dev/console
-if [ "$PCOPY" = "yes" ]; then
- cp /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs /mnt/tmpfs/
- mount -o loop /mnt/tmpfs/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs /base || (echo "База не найдена">/dev/console; check_status 1)
-else
- mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-${DISTRO_VERSION}-base.sfs /base  || (echo "База не найдена">/dev/console; check_status 1)
+ 
+[ "$copy2ram" = "no" -a "$(cat /sys/block/${dev:0:3}/removable)" = 1  ] && check_status "Не отключайте съёмный диск!"
+[ ! "$copy2ram" ] && [ "$(cat /sys/block/${dev:0:3}/removable)" = 1  ] && copy2ram="yes"
+if [ "$copy2ram" = "yes" ]; then
+ mkdir /tmpfs
+ mount -t tmpfs tmpfs /tmpfs
 fi
-if [ -d /mnt/${PDEV}${PDIR}/changes -a "$RO" != "-r" ]; then
- ln -s /mnt/${PDEV}${PDIR}/changes /changes || check_status 1
- echo -n ", подключается каталог сохранения." > /dev/console
-elif [ "$(ls /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.[234s]fs)" ]; then
-	if [ -f /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.[234]fs ]; then	
-	 mkdir /save_ext 
-	 mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.[234]fs /save_ext || check_status 1
-	 MKRAM="yes"
-	 UMNTMAIN='/save_ext=ro+wh:'
-	 echo -n " и файл сохранения " > /dev/console
-	fi
-	if [ -f /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs ]; then
-	 mkdir /save_sq
-		if [ "$PCOPY" = "yes" ]; then
-		 mkdir /save_sq
-		 cp /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs /mnt/tmpfs/
-		 mount -o loop /mnt/tmpfs/${DISTRO_FILE_PREFIX}-save.sfs /save_sq || check_status 1
-		else
-		 mount -o loop /mnt/${PDEV}${PDIR}/base/${DISTRO_FILE_PREFIX}-save.sfs /save_sq || check_status 1
-		fi
-	 UMNTSFS='/save_sq=ro+wh:'
-	 MKRAM="yes"
-	 echo -n " и архив сохранения " > /dev/console
-	fi
+NAME=$(ls /mnt/$dev/$dir/base/*-base.xzm) || check_status 1
+echo -n "Загружается базовый файл" > /dev/console
+module_add base
+if [ -d /mnt/$dev/$dir/changes -a "$RO" != "-r" ]; then
+ echo -n "Подключается каталог сохранения" > /dev/console
+ ln -s /mnt/$dev/$dir/changes /changes 
+ check_status $?
+elif NAME=$(ls /mnt/$dev/$dir/base/*-save.xzm); then
+ echo -n "Подключается модуль сохранения" > /dev/console
+ mkdir /save
+module_add save
+ UMNTXZM='/save=ro+wh:'
+ MKRAM="yes"
 else
  MKRAM="yes"
 fi
-if [ -f /mnt/${PDEV}${PDIR}/base/kernel-${KERNELVER}.sfs ]; then
-	if [ "$PCOPY" = "yes" ]; then
-	 cp /mnt/${PDEV}${PDIR}/base/kernel-${KERNELVER}.sfs /mnt/tmpfs
-	 mount -o loop /mnt/tmpfs/kernel-${KERNELVER}.sfs /kernel || check_status 1
-	else
-	 mount -o loop /mnt/${PDEV}${PDIR}/base/kernel-${KERNELVER}.sfs /kernel || check_status 1
-	fi
+if NAME=$(ls /mnt/$dev/$dir/base/kernel-${KERNELVER}.xzm); then
+	echo -n "Загружается модуль ядра" > /dev/console
+ module_add kernel
  ZLAYER=':/kernel=ro'
 fi
-if [ "$MKRAM" = "yes" ]; then
- ALLOCK=$(($(free -k | awk '/Mem:/ {print $2}') / 2)) #half of physical.
- [ $ALLOCK -gt 524288 ] && ALLOCK=524288
- mkdir /changes
- mount -t tmpfs tmpfs /changes -o size=${ALLOCK}k && echo -n " плюс tmpfs." > /dev/console
+if NAME=$(ls /mnt/$dev/$dir/base/Xorg-*.xzm); then
+ echo -n "Загружается Xorg" > /dev/console
+ mkdir /Xorg
+ module_add Xorg
+ UMNTRO=':/Xorg=ro'
 fi
-check_status 0
+if [ "$MKRAM" = "yes" ]; then
+ echo -n "Подключается tmpfs." > /dev/console
+ mkdir /changes
+ mount -t tmpfs tmpfs /changes -o size=0k
+ check_status $?
+fi
+
 ########################END FINDING AND LOADING PUPPY FILES############################
 
 ##########################FINDING AND LOADING PUPPY MODULES###########################
 
-if [ "$PSOFT" != "no" -o -d /mnt/${PDEV}${PDIR}/${PFSDIR} ];then
- EXTRASFSLIST="${LOAD}$(find /mnt/${PDEV}${PDIR}/${PFSDIR} -name *\.pfs -exec basename {} \;)"
- [ $NOLOAD ] && EXTRASFSLIST=$(echo "$EXTRASFSLIST" | egrep -v "$NOLOAD")
-	if [ "$EXTRASFSLIST" != "" ];then
-	 echo -n "Загружаются модули программ" > /dev/console
-	 echo "$EXTRASFSLIST" | sort > /tmp/PFSMODULES
+if [ -d /mnt/$dev/$dir/modules/ ];then
+ MODULES="$(ls -1 /mnt/$dev/$dir/modules/*\.xzm)"
+ [ $NOLOAD ] && MODULES=$(echo "$MODULES" | egrep -v "$NOLOAD")
+	if [ "$MODULES" != "" ];then
+	 echo "Загружаются модули программ:" > /dev/console
+	 : > /tmp/modules.lst
 	 CNTLOOP=$(losetup -f | tr -d [a-z/])
-		for ONEEXTRA in $(cat /tmp/PFSMODULES)
+		for NAME in $MODULES
 		do
-		 [ "$(dirname $ONEEXTRA)" = "." ] && PFSSDIR="/mnt/${PDEV}${PDIR}/${PFSDIR}" || PFSSDIR="/mnt/$PDEV/"
-		 [ -f ${PFSSDIR}${ONEEXTRA} ] || continue
-		 [ "$(grep $ONEEXTRA /proc/mounts)" = "" ] || continue
-		 mkdir -p /$ONEEXTRA
-			if [ "$PCOPY" = "yes" ]; then
-			 cp ${PFSSDIR}${ONEEXTRA} /mnt/tmpfs/
-			 mount -o loop /mnt/tmpfs/${ONEEXTRA} /$ONEEXTRA
-			else
-			 mount -o loop ${PFSSDIR}${ONEEXTRA} /$ONEEXTRA
-			fi
-		 [ $? -eq 0 ] && UMNTRO="${UMNTRO}:/${ONEEXTRA}=ro"
+		 [ -f "$NAME" ] || continue
+		 MNTPT=$(basename $NAME)
+		 [ "$(grep $MNTPT /proc/mounts)" = "" ] || continue
+		 echo -n $MNTPT > /dev/console
+		 mkdir -p /$MNTPT
+		 echo $MNTPT >> /tmp/modules.lst
+		 module_add $MNTPT
+		 [ $? -eq 0 ] && UMNTRO="${UMNTRO}:/${MNTPT}=ro"
 		 CNTLOOP=`expr $CNTLOOP + 1`
 		 [ $CNTLOOP -eq 128 ] && break
-		 echo -n "." > /dev/console
 		done
-	 check_status 0
 	else
-	 echo -n "Модули не найдены, уточните параметр psubdir" > /dev/console
-	 check_status 1
+	 echo -n "Модули не найдены, уточните параметр psubdir
+Загрузка без модулей" > /dev/console
+	 check_status 0
 	fi
 else
  echo -n "Загрузка без модулей" > /dev/console
  check_status 0
 fi
-if [ ! -d /mnt/${PDEV}${PDIR}/changes -a "$PCOPY" = "yes" ]; then
- umount /mnt/$PDEV
+if [ ! -d /mnt/$dev/$dir/changes -a "$copy2ram" = "yes" ]; then
+ umount /mnt/$dev
 fi
 
 #####################END FINDING AND LOADING PUPPY MODULES#################
 
-[ "$PDEV" ] && echo "PDEV='$PDEV'" > /tmp/PUPSTATE
-[ "$PDIR" ] && echo "PDIR='$PDIR'" >> /tmp/PUPSTATE
-[ "$SYSMNT" ] && echo "SYSMNT='$SYSMNT'" >> /tmp/PUPSTATE
-[ "$IP" ] && echo "SERVIP='$IP'" > /tmp/SERVSTATE
-[ "$SDIR" ] && echo "SDIR='$SDIR'" >> /tmp/SERVSTATE
-
-[ "$RDSH" = "6" ] && exec /bin/sh >/dev/console 2>&1 #w091027
+[ "$dev" ] && echo "PDEV='$dev'" >> /etc/initvars
+[ "$dir" ] && echo "PDIR='$dir'" >> /etc/initvars
+[ "$SWAPON" ] && echo "SWAPON='$SWAPON'" >> /etc/initvars
+[ "$rdsh" = "1" ] && exec /bin/sh >/dev/console 2>&1 #w091027
 
 #######################SETUP UNIONFS LAYERED FILESYSTEM###################
 #create the unionfs layered f.s.... ***THE BIG EVENT***
 echo -n "Настройка слоёв файловой системы unionfs..." > /dev/console
-mount -t aufs -o udba=reval,diropq=w,dirs=/changes=rw:${UMNTMAIN}${UMNTSFS}/base=ro${ZLAYER}${UMNTRO} unionfs /pup_new
-
+mount -t aufs -o udba=reval,diropq=w,dirs=/changes=rw:${UMNTXZM}/base=ro${ZLAYER}${UMNTRO} unionfs /pup_new
 check_status $? #END STEP FIVE
 #######################END SETUP UNIONFS LAYERED FILESYSTEM###################
 
@@ -245,51 +214,64 @@ check_status $? #END STEP FIVE
 echo -n "Замещение корневой файловой системы на многослойную..." > /dev/console
 
 #prepare everything for doing a switch_root...
-
-if [ "$HIDE" != "yes" ]; then
-	for ONEMNT in `awk '/loop/ {print $2}' /proc/mounts`
+for ONEMNT in `awk '/loop/ {print $2}' /proc/mounts`
 	do
-	 mkdir -p /pup_new${SYSMNT}/bundles${ONEMNT}
-	 mount -o move $ONEMNT /pup_new${SYSMNT}/bundles${ONEMNT}
+	 mkdir -p /pup_new/mnt/bundles${ONEMNT}
+	 mount -o move $ONEMNT /pup_new/mnt/bundles${ONEMNT}
 	done
-fi
 
-mkdir -p /pup_new/mnt/$PDEV
-mount -o move /mnt/$PDEV /pup_new/mnt/$PDEV
-mkdir -p /pup_new$SYSMNT/changes
-mount -o move /changes /pup_new$SYSMNT/changes
-if [ "$PCOPY" = "yes" ]; then
- mkdir -p /pup_new/mnt/tmpfs
- mount -o move /mnt/tmpfs /pup_new/mnt/tmpfs
+mkdir -p /pup_new/mnt/$dev
+mount -o move /mnt/$dev /pup_new/mnt/$dev
+mkdir -p /pup_new/mnt/changes
+mount -o move /changes /pup_new/mnt/changes
+if [ "$copy2ram" = "yes" ]; then
+ mkdir -p /pup_new/mnt/copy2ram
+ mount -o move /tmpfs /pup_new/mnt/copy2ram
 fi
 cp /tmp/* /pup_new/tmp
+check_status 0
 
 #mount home partition.
-if [ $CRYPTHOME ]; then
- mount $CRYPTHOME /pup_new/home
-elif [ $UUID ]; then
- mount UUID=$UUID /pup_new/home
-elif [ $LABEL ];then
- mount LABEL=$LABEL /pup_new/home
+mkdir -p /pup_new/home
+#if [ $CRYPTHOME ]; then
+# mount $CRYPTHOME /pup_new/home
+if [ $home ]; then
+ echo -n "Пользовательский каталог /home/live на разделе "  > /dev/console
+ TYPE=$(grep $home /tmp/uuid.lst | sed 's/.*TYPE="//;s/"$//')
+ HDEV=$(grep $home /tmp/uuid.lst | cut -f1 -d':')
+ echo -n ${HDEV:5} > /dev/console
+ case $TYPE in
+	vfat)
+	 mount -t $TYPE $HDEV /pup_new/home -o uid=500,gid=500,dmask=022,fmask=033
+	 check_status $?
+	;;
+	ntfs)
+	 ntfs-3g $HDEV /pup_new/home -o uid=500,gid=500,dmask=022,fmask=033
+	 check_status $?
+	;;
+	ext?)
+	 mount -t $TYPE $HDEV /pup_new/home
+	 check_status $?
+	;;
+ esac
 fi
 
 #PNOX is a boot param. /etc/profile prevents X from starting if this file exists...
-[ "$PNOX" = "yes" ] && touch /pup_new/tmp/bootcnt.txt
-cp /etc/DISTRO_SPECS /pup_new/etc/
+[ "$nox" ] && touch /pup_new/tmp/bootcnt.txt
+cp /etc/initvars /pup_new/etc/
 cp -af /tmp/* /pup_new/initrd/tmp/ #keep any log files.
 
-#RDSH is a boot param. exit to initial ramdisk shell...
-if [ "$RDSH" = "yes" ];then
+#rdsh is a boot param. exit to initial ramdisk shell...
+if [ "$rdsh" = "2" ];then
  echo > /dev/console
  echo "Выходим в оболочку рамдиска. Наберите 'exec switch_root /pup_new /sbin/init' для продолжения загрузки PuppyRus." > /dev/console 
  exec /bin/sh >/dev/console 2>&1
 fi
 
 sync
-umount /proc/bus/usb
 umount /sys
 umount /proc
-
+echo "Старт основной системы......" > /dev/console
 exec switch_root /pup_new /sbin/init
 
 ###END###
