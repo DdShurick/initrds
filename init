@@ -16,16 +16,16 @@ check_status()
     /bin/echo -en "\\033[1;31mошибка" >/dev/console
     /bin/echo -e "\\033[0;39m" >/dev/console
     echo -en "\\033[1;35m" >/dev/console #35=purple
-    echo -n "Последние 4 строки /tmp/bootinit.log..." >/dev/console
+    echo -n "Последние 6 строк /tmp/bootinit.log..." >/dev/console
     /bin/echo -e "\\033[0;39m" >/dev/console
     echo -en "\\033[1;31m" >/dev/console #31=red
-    cat /tmp/bootinit.log | tail -n 4 >/dev/console
+    cat /tmp/bootinit.log | tail -n 6 >/dev/console
     /bin/echo -en "\\033[0;39m" >/dev/console
     echo -en "\\033[1;35m" >/dev/console #35=purple
-    echo -n "Последние 4 строки kernel log..." >/dev/console
+    echo -n "Последние 6 строк kernel log..." >/dev/console
     /bin/echo -e "\\033[0;39m" >/dev/console
     echo -en "\\033[1;31m" >/dev/console #31=red
-    dmesg | tail -n 4 >/dev/console
+    dmesg | tail -n 6 >/dev/console
     /bin/echo -en "\\033[0;39m" >/dev/console
     exec /bin/sh >/dev/console 2>&1
   else
@@ -54,11 +54,11 @@ KERNELVER="`uname -r`"
 [ $dir ] || dir="*" 	#directory for puppy files. ex: puppy220
 [ $noload ] && NOLOAD=$(echo "$noload" | tr ',' '|')
 
-mount -t proc none /proc
-mount -t sysfs none /sys
+mount -t proc proc /proc -o nosuid,noexec,nodev
+mount -t sysfs sys /sys -o nosuid,noexec,nodev
+mount -t devtmpfs dev /dev -o mode=0755,nosuid
 mount -t rootfs -o remount,rw rootfs /
-ln -s /proc/mounts /etc/mtab #resize2fs,e2fsck need this.
-ls /dev > /tmp/devices
+ln -s /proc/mounts /etc/mtab
 
 clear #got this out of embutils, compiled in t2 (as not currently in busybox)
 [ ! "$LOGLEVEL" ] && exec 1>/tmp/bootinit.log 2>&1 #remove o/p from console. v2.22 loglevel added.
@@ -67,10 +67,11 @@ clear #got this out of embutils, compiled in t2 (as not currently in busybox)
 ###########  Tuxonice wake up ##############
 
 [ $resume ] && RESUME=$resume || RESUME=$(fdisk -l | grep -m 1 ' 82 ' | cut -f1 -d' ') # swap
-echo $RESUME > /sys/power/tuxonice/resume
-sleep 0.1
-echo 1 > /sys/power/tuxonice/do_resume
-
+if [ -d /sys/power/tuxonice ]; then
+	echo $RESUME > /sys/power/tuxonice/resume
+	sleep 0.1
+	echo 1 > /sys/power/tuxonice/do_resume
+fi
 swapon $RESUME && SWAPON=$RESUME
 
 ############################################
@@ -86,23 +87,22 @@ if [ $dev ]; then
 		sleep 5
 		blkid > /tmp/uuid.lst
 	fi
-	dev1=$(grep $dev /tmp/uuid.lst | cut -b6-9)
+	dev1=$(grep $dev /tmp/uuid.lst | cut -b6-10 | tr -d ':')
 else
-	dev1=$(egrep -v 'loop|swap' /tmp/uuid.lst | cut -b6-9)
+	dev1=$(egrep -v 'loop|swap' /tmp/uuid.lst | cut -b6-10 | tr -d ':')
 fi
 for DEV in $dev1
  do
-  grep $DEV /tmp/uuid.lst | grep ntfs && MNT=ntfs-3g || MNT=mount
   mkdir /mnt/$DEV
   N=0
- 	until $MNT /dev/$DEV /mnt/$DEV 2>/dev/null
+ 	until mount /dev/$DEV /mnt/$DEV 2>/dev/null
 	 do
 	  sleep 1
 	  echo -n . >/dev/console
 	  N=$(expr $N + 1)
 	  [ $N = 10 ] && check_status 1
 	 done
- DIR=$(ls /mnt/$DEV/$dir/base/kernel-${KERNELVER}.xzm 2>/dev/null | cut -d'/' -f4- | sed 's|/base/kernel.*||')
+	DIR=$(ls /mnt/$DEV/$dir/base/*kernel-${KERNELVER}.xzm 2>/dev/null | sed 's|/base/.*||')
 	if [ ! $DIR ]; then
 	 umount /mnt/$DEV
 	 rmdir /mnt/$DEV
@@ -113,7 +113,7 @@ for DEV in $dev1
  	 read DIR
  	fi
   dev=$DEV
-  dir=$DIR
+  dir=$(basename $DIR)
   check_status 0
   break
  done
@@ -124,7 +124,8 @@ if [ "$copy2ram" = "yes" ]; then
  mkdir /tmpfs
  mount -t tmpfs tmpfs /tmpfs
 fi
-NAME=$(ls /mnt/$dev/$dir/base/*-base.xzm) || check_status 1
+DISTRO_FILE_PREFIX=$(basename $(ls /mnt/$dev/$dir/base/*-base.xzm) -base.xzm) || check_status 1
+NAME=/mnt/$dev/$dir/base/${DISTRO_FILE_PREFIX}-base.xzm
 echo -n "Загружается базовый файл" > /dev/console
 module_add base
 if [ -d /mnt/$dev/$dir/changes -a "$RO" != "-r" ]; then
@@ -140,7 +141,7 @@ module_add save
 else
  MKRAM="yes"
 fi
-if NAME=$(ls /mnt/$dev/$dir/base/kernel-${KERNELVER}.xzm); then
+if NAME=$(ls /mnt/$dev/$dir/base/*kernel-${KERNELVER}.xzm); then
 	echo -n "Загружается модуль ядра" > /dev/console
  module_add kernel
  KERNEL='/kernel=ro:'
@@ -197,14 +198,15 @@ fi
 
 #####################END FINDING AND LOADING PUPPY MODULES#################
 
-[ "$dev" ] && echo "PDEV='$dev'" >> /etc/initvars
-[ "$dir" ] && echo "PDIR='$dir'" >> /etc/initvars
+echo "PDEV='$dev'" >> /etc/initvars
+echo "PDIR='$dir'" >> /etc/initvars
 [ "$SWAPON" ] && echo "SWAPON='$SWAPON'" >> /etc/initvars
+echo "DISTRO_FILE_PREFIX='$DISTRO_FILE_PREFIX'" >> /etc/initvars
 [ "$rdsh" = "1" ] && exec /bin/sh >/dev/console 2>&1 #w091027
 
 #######################SETUP UNIONFS LAYERED FILESYSTEM###################
 #create the unionfs layered f.s.... ***THE BIG EVENT***
-echo -n "Настройка слоёв файловой системы unionfs..." > /dev/console
+echo -n "Настройка слоёв файловой системы aufs..." > /dev/console
 mount -t aufs -o udba=reval,diropq=w,dirs=/changes=rw:${SAVEXZM}${UMNTRO}${KERNEL}/base=ro unionfs /pup_new
 check_status $? #END STEP FIVE
 #######################END SETUP UNIONFS LAYERED FILESYSTEM###################
@@ -239,6 +241,7 @@ if [ $home ]; then
  echo -n "Пользовательский каталог /home/live на разделе "  > /dev/console
  TYPE=$(grep $home /tmp/uuid.lst | sed 's/.*TYPE="//;s/"$//')
  HDEV=$(grep $home /tmp/uuid.lst | cut -f1 -d':')
+ echo "DEVHOME='$HDEV'" >> /etc/initvars
  echo -n ${HDEV:5} > /dev/console
  case $TYPE in
 	vfat)
@@ -246,7 +249,7 @@ if [ $home ]; then
 	 check_status $?
 	;;
 	ntfs)
-	 ntfs-3g $HDEV /pup_new/home -o uid=1000,gid=1000,dmask=022,fmask=033
+	 mount -t $TYPE $HDEV /pup_new/home -o uid=1000,gid=1000,dmask=022,fmask=033
 	 check_status $?
 	;;
 	ext?)
@@ -271,6 +274,7 @@ fi
 sync
 umount /sys
 umount /proc
+umount /dev
 echo "Старт основной системы......" > /dev/console
 exec switch_root /pup_new /sbin/init
 
