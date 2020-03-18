@@ -3,8 +3,8 @@
 #(c) Copyright 2007 Barry Kauler, www.puppylinux.com
 #2007 Lesser GPL licence v2 (http://www.fsf.org/licensing/licenses/lgpl.html)
 #
-#puppyrus2 tuxonice section add Pro
 #DdShurick переписал всё нафиг с 35 строки
+#Обновление 
 
 check_status()
 {
@@ -36,6 +36,7 @@ check_status()
 }
 
 module_add () {
+	mkdir -p /$1
 	if [ "$copy2ram" = "yes" ]; then
 	 cp $NAME /tmpfs/
 	 mount -o loop /tmpfs/$(basename $NAME) /$1
@@ -53,6 +54,7 @@ PATH="/bin:/sbin"
 KERNELVER="`uname -r`"
 [ $dir ] || dir="*" 	#directory for puppy files. ex: puppy220
 [ $noload ] && NOLOAD=$(echo "$noload" | tr ',' '|')
+[ $load ] && LOAD=$(echo "$load" | tr ',' '|')
 
 mount -t proc proc /proc -o nosuid,noexec,nodev
 mount -t sysfs sys /sys -o nosuid,noexec,nodev
@@ -63,20 +65,7 @@ ln -s /proc/mounts /etc/mtab
 clear #got this out of embutils, compiled in t2 (as not currently in busybox)
 [ ! "$LOGLEVEL" ] && exec 1>/tmp/bootinit.log 2>&1 #remove o/p from console. v2.22 loglevel added.
 
-#puppyrus2 tuxonice section 
-###########  Tuxonice wake up ##############
-
-[ $resume ] && RESUME=$resume || RESUME=$(fdisk -l | grep -m 1 ' 82 ' | cut -f1 -d' ') # swap
-if [ -d /sys/power/tuxonice ]; then
-	echo $RESUME > /sys/power/tuxonice/resume
-	sleep 0.1
-	echo 1 > /sys/power/tuxonice/do_resume
-fi
-swapon $RESUME && SWAPON=$RESUME
-
-############################################
-
-#######################FINDING AND LOADING PUPPY FILES###########################
+###################FINDING AND LOADING PUPPY FILES###########################
 [ "$rdsh" = "0" ] && exec /bin/sh >/dev/console 2>&1
 echo -n "Поиск системных файлов" > /dev/console
 
@@ -89,6 +78,7 @@ if [ $dev ]; then
 	fi
 	dev1=$(grep $dev /tmp/uuid.lst | cut -b6-10 | tr -d ':')
 else
+	sleep 5
 	dev1=$(egrep -v 'loop|swap' /tmp/uuid.lst | cut -b6-10 | tr -d ':')
 fi
 for DEV in $dev1
@@ -134,8 +124,7 @@ if [ -d /mnt/$dev/$dir/changes -a "$RO" != "-r" ]; then
  check_status $?
 elif NAME=$(ls /mnt/$dev/$dir/base/*-save.xzm); then
  echo -n "Подключается модуль сохранения" > /dev/console
- mkdir /save
-module_add save
+ module_add save
  SAVEXZM='/save=ro+wh:'
  MKRAM="yes"
 else
@@ -148,7 +137,6 @@ if NAME=$(ls /mnt/$dev/$dir/base/*kernel-${KERNELVER}.xzm); then
 fi
 if NAME=$(ls /mnt/$dev/$dir/base/Xorg-*.xzm); then
  echo -n "Загружается Xorg" > /dev/console
- mkdir /Xorg
  module_add Xorg
  UMNTRO='/Xorg=ro:'
 fi
@@ -159,24 +147,46 @@ if [ "$MKRAM" = "yes" ]; then
  check_status $?
 fi
 
-########################END FINDING AND LOADING PUPPY FILES############################
+#################END FINDING AND LOADING PUPPY FILES#########################
 
-##########################FINDING AND LOADING PUPPY MODULES###########################
+##################FINDING AND LOADING PUPPY MODULES##########################
 
 if [ -d /mnt/$dev/$dir/modules/ ];then
- MODULES="$(ls -1 /mnt/$dev/$dir/modules/*\.xzm)"
- [ $NOLOAD ] && MODULES=$(echo "$MODULES" | egrep -v "$NOLOAD")
-	if [ "$MODULES" != "" ];then
+#  for M in $NOLOAD
+# 	do
+#	  if [ -h /mnt/$dev/$dir/modules/${M}* ]; then
+#		mv $(realpath /mnt/$dev/$dir/modules/${M}*) /mnt/$dev/$dir/optional/
+#		rm /mnt/$dev/$dir/modules/${M}*
+#	  fi
+# 	[ -e /mnt/$dev/$dir/modules/${M}* ] && mv /mnt/$dev/$dir/modules/${M}* /mnt/$dev/$dir/optional/
+# 	done
+#  for M in $LOAD
+#	do
+#	[ -e /mnt/$dev/$dir/optional/${M}* ] && mv /mnt/$dev/$dir/optional/${M}* /mnt/$dev/$dir/modules/
+#	done
+#  MODULES="$(find /mnt/$dev/$dir/modules/ -name *\.xzm)"
+	if [ "$noload" ]; then
+#		MODULES=$(find /mnt/$dev/$dir/modules/ -name *\.xzm | egrep -v $NOLOAD)
+		find /mnt/$dev/$dir/modules/ -name *\.xzm | egrep -v $NOLOAD > /tmp/mod.lst
+	else
+#		MODULES=$(find /mnt/$dev/$dir/modules/ -name *\.xzm)
+		find /mnt/$dev/$dir/modules/ -name *\.xzm > /tmp/mod.lst
+	fi
+#  [ "$load" ] && MODULES=${MODULES}$(find /mnt/$dev/$dir/optional/ -name *\.xzm | egrep $LOAD)
+	[ "$load" ] && find /mnt/$dev/$dir/optional/ -name *\.xzm | egrep $LOAD >> /tmp/mod.lst
+#	if [ "$MODULES" != "" ];then
+	if [ -s /tmp/mod.lst ];then
 	 echo "Загружаются модули программ:" > /dev/console
 	 : > /tmp/modules.lst
 	 CNTLOOP=$(losetup -f | tr -d [a-z/])
-		for NAME in $MODULES
+#		for NAME in $MODULES
+		for NAME in $(cat /tmp/mod.lst)
 		do
 		 [ -f "$NAME" ] || continue
 		 MNTPT=$(basename $NAME)
 		 [ "$(grep $MNTPT /proc/mounts)" = "" ] || continue
 		 echo -n $MNTPT > /dev/console
-		 mkdir -p /$MNTPT
+#		 mkdir -p /$MNTPT
 		 echo $MNTPT >> /tmp/modules.lst
 		 module_add $MNTPT
 		 [ $? -eq 0 ] && UMNTRO="${UMNTRO}/${MNTPT}=ro:"
@@ -209,7 +219,7 @@ echo "DISTRO_FILE_PREFIX='$DISTRO_FILE_PREFIX'" >> /etc/initvars
 echo -n "Настройка слоёв файловой системы aufs..." > /dev/console
 mount -t aufs -o udba=reval,diropq=w,dirs=/changes=rw:${SAVEXZM}${UMNTRO}${KERNEL}/base=ro unionfs /pup_new
 check_status $? #END STEP FIVE
-#######################END SETUP UNIONFS LAYERED FILESYSTEM###################
+######################END SETUP UNIONFS LAYERED FILESYSTEM###################
 
 #######################SETUP SWITCH TO MAIN FILESYSTEM#######################
 
@@ -242,19 +252,19 @@ if [ $home ]; then
  TYPE=$(grep $home /tmp/uuid.lst | sed 's/.*TYPE="//;s/"$//')
  HDEV=$(grep $home /tmp/uuid.lst | cut -f1 -d':')
  echo "DEVHOME='$HDEV'" >> /etc/initvars
- echo -n ${HDEV:5} > /dev/console
+ echo ${HDEV:5} > /dev/console
  case $TYPE in
-	vfat)
-	 mount -t $TYPE $HDEV /pup_new/home -o uid=1000,gid=1000,dmask=022,fmask=033
-	 check_status $?
+	vfat) echo "$HDEV /home $TYPE user,uid=1000,gid=1000,dmask=022,fmask=033  0 0" >> /pup_new/etc/fstab
+#	 mount -t $TYPE $HDEV /pup_new/home -o uid=1000,gid=1000,dmask=022,fmask=033
+#	 check_status $?
 	;;
-	ntfs)
-	 mount -t $TYPE $HDEV /pup_new/home -o uid=1000,gid=1000,dmask=022,fmask=033
-	 check_status $?
+	ntfs) echo "$HDEV /home ntfs-3g uid=1000,gid=1000,dmask=022,fmask=033 0 0" >> /pup_new/etc/fstab
+#	 mount -t $TYPE $HDEV /pup_new/home -o uid=1000,gid=1000,dmask=022,fmask=033
+#	 check_status $?
 	;;
-	ext?)
-	 mount -t $TYPE $HDEV /pup_new/home
-	 check_status $?
+	ext?) echo "$HDEV	/home	$TYPE	user	0 0" >> /pup_new/etc/fstab
+#	 mount -t $TYPE $HDEV /pup_new/home
+#	 check_status $?
 	;;
  esac
 fi
